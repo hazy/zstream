@@ -305,7 +305,7 @@ defmodule Zstream.Unzip do
            day,
            hour,
            minute,
-           second * 2
+           Integer.mod(second * 2, 60)
          ) do
       {:ok, datetime} ->
         datetime
