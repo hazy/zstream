@@ -9,6 +9,8 @@ defmodule Zstream.Unzip do
 
   use Bitwise
 
+  require Logger
+
   defmodule LocalHeader do
     @moduledoc false
     defstruct [
@@ -297,16 +299,25 @@ defmodule Zstream.Unzip do
     <<year::size(7), month::size(4), day::size(5)>> = <<date::size(16)>>
     <<hour::size(5), minute::size(6), second::size(5)>> = <<time::size(16)>>
 
-    {:ok, datetime} =
-      NaiveDateTime.new(
-        1980 + year,
-        month,
-        day,
-        hour,
-        minute,
-        second * 2
-      )
+    case NaiveDateTime.new(
+           1980 + year,
+           month,
+           day,
+           hour,
+           minute,
+           second * 2
+         ) do
+      {:ok, datetime} ->
+        datetime
 
-    datetime
+      error ->
+        Logger.error(fn ->
+          "Error parsing datetime #{inspect(error)}: " <>
+            "year: #{1980 + year}; month: #{month}; day: #{day}; hour: #{hour}; minute: #{minute}; second: #{
+              second * 2
+            }"
+        end)
+        NaiveDateTime.utc_now()
+    end
   end
 end
