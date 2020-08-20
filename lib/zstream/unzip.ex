@@ -33,6 +33,7 @@ defmodule Zstream.Unzip do
     defstruct next: :local_file_header,
               buffer: "",
               local_header: nil,
+              byte_offset: 0,
               data_sent: 0,
               decoder: nil,
               decoder_state: nil
@@ -148,7 +149,8 @@ defmodule Zstream.Unzip do
           | local_header: local_header,
             next: :filename_extra_field,
             decoder: decoder,
-            decoder_state: decoder_state
+            decoder_state: decoder_state,
+            byte_offset: state.byte_offset + 30
         })
 
       :done ->
@@ -171,19 +173,30 @@ defmodule Zstream.Unzip do
     state = put_in(state.local_header.extra_field, extra_field)
     state = %{state | next: :file_data}
     state = put_in(state.local_header.extras, Extra.parse(extra_field, []))
+    state = %{state | byte_offset: state.byte_offset + start}
 
     zip64_extended_information =
       Enum.find(state.local_header.extras, &match?(%Extra.Zip64ExtendedInformation{}, &1))
 
-    state =
-      if zip64_extended_information do
-        state =
-          put_in(state.local_header.compressed_size, zip64_extended_information.compressed_size)
+    entry = %Entry{
+      name: local_header.file_name,
+      compressed_size: compressed_size,
+      size: size,
+      mtime: dos_time(local_header.last_modified_file_date, local_header.last_modified_file_time),
+      extras: extras,
+      source: %Entry.Source{
+        byte_range: [state.byte_offset, state.byte_offset + compressed_size],
+        crc32: state.local_header.crc32,
+        compression_method: state.local_header.compression_method
+      }
+    }
 
-        put_in(state.local_header.uncompressed_size, zip64_extended_information.size)
-      else
-        state
-      end
+    state =
+      Map.update!(
+        state,
+        :local_header,
+        &Map.merge(&1, %{compressed_size: compressed_size, uncompressed_size: size})
+      )
 
     {results, new_state} = execute_state_machine(rest, state)
     {Stream.concat([{:local_header, state.local_header}], results), new_state}
@@ -203,7 +216,13 @@ defmodule Zstream.Unzip do
       start = length
       rest = binary_part(data, start, size - start)
 
-      state = %{state | data_sent: 0, next: :next_header}
+      state = %{
+        state
+        | data_sent: 0,
+          next: :next_header,
+          byte_offset: state.byte_offset + state.local_header.compressed_size
+      }
+
       {results, state} = execute_state_machine(rest, state)
       {Stream.concat([chunks, [{:data, :eof}], results]), state}
     end
@@ -222,7 +241,11 @@ defmodule Zstream.Unzip do
 
         case signature do
           0x04034B50 ->
-            execute_state_machine(rest, %{state | next: :local_file_header})
+            execute_state_machine(rest, %{
+              state
+              | next: :local_file_header,
+                byte_offset: state.byte_offset + start
+            })
 
           # archive extra data record
           0x08064B50 ->

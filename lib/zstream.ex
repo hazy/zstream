@@ -4,14 +4,24 @@ defmodule Zstream do
   """
 
   defmodule Entry do
+    defmodule Source do
+      @type t :: %__MODULE__{
+              byte_range: [integer(), ...],
+              crc32: integer(),
+              compression_method: 0 | 8
+            }
+      defstruct [:byte_range, :crc32, :compression_method]
+    end
+
     @type t :: %__MODULE__{
             name: String.t(),
             compressed_size: integer(),
             mtime: NaiveDateTime.t(),
             size: integer(),
-            extras: list()
+            extras: list(),
+            source: Source.t()
           }
-    defstruct [:name, :compressed_size, :mtime, :size, :extras]
+    defstruct [:name, :compressed_size, :mtime, :size, :extras, :source]
   end
 
   @opaque entry :: map

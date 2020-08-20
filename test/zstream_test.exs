@@ -293,15 +293,20 @@ defmodule ZstreamTest do
   end
 
   defp verify_unzip(path) do
-    file(path <> "/archive.zip")
+    filename = path <> "/archive.zip"
+    fullpath = path(filename)
+
+    Logger.info(["verify_unzip: ", fullpath])
+
+    file(filename)
     |> Zstream.unzip()
     |> Enum.reduce(
-      %{buffer: "", file_name: nil},
+      %{buffer: "", file_name: nil, entry: nil},
       fn
         {:entry, %Zstream.Entry{name: file_name} = entry}, state ->
           Logger.info(inspect(entry))
           state = put_in(state.file_name, file_name)
-          put_in(state.buffer, "")
+          %{state | buffer: "", entry: entry}
 
         {:data, :eof}, state ->
           unless String.ends_with?(state.file_name, "/") do
@@ -311,6 +316,13 @@ defmodule ZstreamTest do
               File.read!(Path.join([__DIR__, "fixture", path, "inflated", state.file_name]))
 
             assert actual == expected
+
+            [first, last] = state.entry.source.byte_range
+
+            zip_bytes = read_bytes(fullpath, first, last)
+            src_bytes = Zstream.Decoder.decode(state.entry.source.compression_method, zip_bytes)
+
+            assert src_bytes == expected
           end
 
           state
@@ -319,6 +331,11 @@ defmodule ZstreamTest do
           put_in(state.buffer, [state.buffer, data])
       end
     )
+  end
+
+  defp read_bytes(path, first, last) do
+    bytes = File.read!(path)
+    binary_part(bytes, first, last - first)
   end
 
   defp verify_unzip_error(path, error) do
@@ -337,6 +354,10 @@ defmodule ZstreamTest do
 
   defp file(name, size \\ 100) do
     File.stream!(Path.join([__DIR__, "fixture", name]), [], size)
+  end
+
+  defp path(name) do
+    Path.join([__DIR__, "fixture", name])
   end
 
   def random_bytes() do
