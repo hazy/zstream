@@ -5,7 +5,6 @@ defmodule Zstream.Decoder.Deflate do
   def init() do
     z = :zlib.open()
     :ok = :zlib.inflateInit(z, -15)
-    :zlib.setBufSize(z, 512 * 1024)
     z
   end
 

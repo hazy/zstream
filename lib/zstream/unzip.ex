@@ -24,7 +24,8 @@ defmodule Zstream.Unzip do
       :extra_field_length,
       :file_name,
       :extra_field,
-      :extras
+      :extras,
+      :byte_offset
     ]
   end
 
@@ -58,7 +59,12 @@ defmodule Zstream.Unzip do
       compressed_size: local_header.compressed_size,
       size: local_header.uncompressed_size,
       mtime: dos_time(local_header.last_modified_file_date, local_header.last_modified_file_time),
-      extras: local_header.extras
+      extras: local_header.extras,
+      source: %Entry.Source{
+        byte_range: [local_header.byte_offset, local_header.byte_offset + local_header.compressed_size],
+        crc32: local_header.crc32,
+        compression_method: local_header.compression_method
+      }
     }
 
     {[{:entry, entry}], %{state | local_header: local_header}}
@@ -171,32 +177,22 @@ defmodule Zstream.Unzip do
     rest = binary_part(data, start, byte_size(data) - start)
     state = put_in(state.local_header.file_name, file_name)
     state = put_in(state.local_header.extra_field, extra_field)
-    state = %{state | next: :file_data}
+    state = %{state | next: :file_data, byte_offset: state.byte_offset + start}
     state = put_in(state.local_header.extras, Extra.parse(extra_field, []))
-    state = %{state | byte_offset: state.byte_offset + start}
+    state = put_in(state.local_header.byte_offset, state.byte_offset)
 
     zip64_extended_information =
       Enum.find(state.local_header.extras, &match?(%Extra.Zip64ExtendedInformation{}, &1))
 
-    entry = %Entry{
-      name: local_header.file_name,
-      compressed_size: compressed_size,
-      size: size,
-      mtime: dos_time(local_header.last_modified_file_date, local_header.last_modified_file_time),
-      extras: extras,
-      source: %Entry.Source{
-        byte_range: [state.byte_offset, state.byte_offset + compressed_size],
-        crc32: state.local_header.crc32,
-        compression_method: state.local_header.compression_method
-      }
-    }
-
     state =
-      Map.update!(
-        state,
-        :local_header,
-        &Map.merge(&1, %{compressed_size: compressed_size, uncompressed_size: size})
-      )
+      if zip64_extended_information do
+        state =
+          put_in(state.local_header.compressed_size, zip64_extended_information.compressed_size)
+
+        put_in(state.local_header.uncompressed_size, zip64_extended_information.size)
+      else
+        state
+      end
 
     {results, new_state} = execute_state_machine(rest, state)
     {Stream.concat([{:local_header, state.local_header}], results), new_state}
